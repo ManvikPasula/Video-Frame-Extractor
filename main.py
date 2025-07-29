@@ -3,6 +3,9 @@ import shutil
 import zipfile
 import tempfile
 import imageio
+import imageio_ffmpeg
+# Point imageio to the bundled ffmpeg binary
+os.environ['IMAGEIO_FFMPEG_EXE'] = imageio_ffmpeg.get_ffmpeg_exe()
 import streamlit as st
 from yt_dlp import YoutubeDL
 from urllib.parse import urlparse, parse_qs
