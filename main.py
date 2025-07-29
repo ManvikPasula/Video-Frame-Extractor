@@ -2,7 +2,7 @@ import os
 import shutil
 import zipfile
 import tempfile
-import cv2
+import imageio
 import streamlit as st
 from yt_dlp import YoutubeDL
 from urllib.parse import urlparse, parse_qs
@@ -22,12 +22,9 @@ if 'idx' not in st.session_state:
 # Helpers to get a label
 
 def make_label_from_path(path: str) -> str:
-    name = os.path.splitext(os.path.basename(path))[0]
-    return name
-
+    return os.path.splitext(os.path.basename(path))[0]
 
 def make_label_from_url(url: str) -> str:
-    # try to extract YouTube video id
     parsed = urlparse(url)
     qs = parse_qs(parsed.query)
     vid = qs.get('v', [''])[0]
@@ -52,27 +49,27 @@ def download_video(youtube_url: str, output_path: str, progress_bar) -> str:
         info = ydl.extract_info(youtube_url, download=True)
         return ydl.prepare_filename(info)
 
-# Load
-
+# Load video with ImageIO
 def load_video(path: str):
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened():
+    try:
+        reader = imageio.get_reader(path, 'ffmpeg')
+        meta = reader.get_meta_data()
+        st.session_state.total_frames = meta.get('nframes', None) or reader.count_frames()
+        st.session_state.idx = max(0, min(st.session_state.idx, st.session_state.total_frames - 1))
+        return reader
+    except Exception:
         st.error('Failed to open video file')
         return None
-    st.session_state.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    st.session_state.idx = max(0, min(st.session_state.idx, st.session_state.total_frames - 1))
-    return cap
 
 # Extract frame
-def get_frame(cap, idx: int):
-    cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-    ret, frame = cap.read()
-    if not ret:
+def get_frame(reader, idx: int):
+    try:
+        frame = reader.get_data(idx)  # HxWx3 RGB
+        return frame
+    except Exception:
         return None
-    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-# Zip
-
+# Zip frames directory
 def zip_frames(frames_dir: str) -> str:
     zip_path = os.path.join(tempfile.gettempdir(), 'frames.zip')
     with zipfile.ZipFile(zip_path, 'w') as zipf:
@@ -113,56 +110,46 @@ elif source == 'YouTube URL':
                     st.error('Please enter a valid YouTube video link')
             progress_bar.empty()
 
+# Reset & Download MP4
 if st.session_state.video_path:
     colA, colB = st.columns([1,1])
     if colA.button('Reset Video', key='reset_video'):
-        # delete only the downloaded/uploaded video file
         try:
             os.remove(st.session_state.video_path)
         except:
             pass
-        # clear session state
         st.session_state.video_path = None
         st.session_state.video_label = None
         st.session_state.total_frames = 0
         st.session_state.idx = 0
-        # clear YouTube URL input
         if 'yt_link' in st.session_state:
             st.session_state.yt_link = ''
-    # only show download button when a video is present
     if st.session_state.video_path:
         with open(st.session_state.video_path, 'rb') as vf:
             colB.download_button('Download Video (MP4)', vf, file_name=os.path.basename(st.session_state.video_path), key='download_mp4')
 
 # Frame Navigation
 if st.session_state.video_path:
-    cap = load_video(st.session_state.video_path)
-    if cap:
+    reader = load_video(st.session_state.video_path)
+    if reader:
         nav = st.columns([1,1,6,1,1])
-        # Jump back 10 frames
         if nav[0].button('⏪', key='jump_back_10'):
             st.session_state.idx = max(st.session_state.idx - 10, 0)
-        # Step back 1 frame
         if nav[1].button('⬅️', key='step_back'):
             st.session_state.idx = max(st.session_state.idx - 1, 0)
-        # Slider
         st.session_state.idx = nav[2].slider('Frame', 0, st.session_state.total_frames - 1, st.session_state.idx, key='frame_slider')
-        # Step forward 1 frame
         if nav[3].button('➡️', key='step_forward'):
             st.session_state.idx = min(st.session_state.idx + 1, st.session_state.total_frames - 1)
-        # Jump forward 10 frames
         if nav[4].button('⏩', key='jump_forward_10'):
             st.session_state.idx = min(st.session_state.idx + 10, st.session_state.total_frames - 1)
-        # Display frame
-        frame = get_frame(cap, st.session_state.idx)
+        frame = get_frame(reader, st.session_state.idx)
         if frame is not None:
-            st.image(frame, use_container_width=True)
+            st.image(frame, use_column_width=True)
             if st.button('Save Frame', key='save_frame'):
                 label = st.session_state.video_label or 'video'
                 fname = f"{label}_frame_{st.session_state.idx:06d}.jpg"
                 out = os.path.join(st.session_state.frames_dir, fname)
-                cv2.imwrite(out, cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        cap.release()
+                imageio.imwrite(out, frame)
 
 # Frame List & Reset
 colF1, colF2 = st.columns([1,3])
