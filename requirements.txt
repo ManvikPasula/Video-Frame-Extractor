@@ -1,5 +1,3 @@
-zipfile
-tempfile
 opencv-python
 streamlit
 yt-dlp
