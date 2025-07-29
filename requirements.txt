@@ -1,3 +1,4 @@
 imageio
+imageio_ffmpeg
 streamlit
 yt_dlp
